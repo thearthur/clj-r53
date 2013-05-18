@@ -92,6 +92,7 @@
                  value)
             [[:ResourceRecord
               [:Value value]]])])]])
+
 (defn create [type {:keys [name value ttl] :as row}]
   (require-arg "name" name)
   (require-arg "value" value)
@@ -211,13 +212,14 @@
       (parse-resource-record-sets-response (-> resp :body)))))
 
 (defn find
-  "Filters the list of rows returned by list-resource-record-sets. match is a map. Returns all rows where all the values in match are = to the values in row.
+  "Filters the list of rows returned by list-resource-record-sets. match is a map. Returns all rows where all the values in any match map are = to the values in row.
 
   examples:
   (find-by-name credentials zone-id {:name \"foo.bar.com\"})
-  (find-by-name credentials zone-id {:name \"foo.bar.com\" :type \"A\"}) "
-  [credentials zone-id match]
-  (filter #(submap? match %)
+  (find-by-name credentials zone-id {:name \"foo.bar.com\" :type \"A\"})
+  (find-by-name credentials zone-id {:name \"foo.bar.com\" :type \"A\"} {:name \"baz.bar.com\"} {:name \"qux.bar.com\" :type \"CNAME\"})"
+  [credentials zone-id & match]
+  (filter #(not (not-any? (partial submap? %) match))
           (-> (list-resource-record-sets credentials zone-id) :rows)))
 
 (defn block-until-sync [credentials change-id]
@@ -249,3 +251,22 @@
         (do (block-until-sync credentials (change-id (-> resp :body)))
             resp)
         resp))))
+
+(defn make-it-so [account hosted-domain entries]
+  (let [zone-id (get (list-hosted-zones account) hosted-domain)]
+    (if-let [existing-entry (apply find account zone-id entries)]
+      (do (println "deleteing" existing-entry)
+          (apply with-r53-transaction account zone-id
+                 (concat (map delete existing-entry) (change (assoc existing-entry :action "CREATE"))))))))
+
+
+
+(let [match [{:name "a.foo.com" :type "A"}
+             {:name "a.foo.com" :type "CNAME"} 
+             {:name "b.foo.com"}]
+                      least-common-denominator-match 4] 
+                  (filter  #(not (not-any? (fn [x] (submap? x %)) match))
+                           [{:name "a.foo.com" :value "1.2.3.4" :type "A"}
+                            {:name "a.foo.com" :type "CNAME" :value "example.com"}
+                            {:name "a.foo.com" :type "MX" :value "mail.foo.com"}
+                            {:name "b.foo.com" :value "foo.com" :type "CNAME"}]))
